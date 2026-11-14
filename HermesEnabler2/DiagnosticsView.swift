@@ -2,7 +2,6 @@ import SwiftUI
 
 struct DiagnosticsView: View {
     var model: ContentModel
-    @State private var busy = false
 
     var body: some View {
         List {
@@ -28,7 +27,6 @@ struct DiagnosticsView: View {
                 Section("Report") {
                     Text(model.diagnosticReportText)
                         .font(.system(.caption2, design: .monospaced))
-                        .textSelection(.enabled)
                 }
 
                 Section("Export") {
@@ -59,16 +57,8 @@ struct DiagnosticsView: View {
             }
 
             Section {
-                Button {
-                    busy = true
+                Button("Refresh dump") {
                     model.refreshDiagnostic()
-                    busy = false
-                } label: {
-                    if busy {
-                        ProgressView()
-                    } else {
-                        Label("Refresh dump", systemImage: "arrow.clockwise")
-                    }
                 }
             }
         }
@@ -87,8 +77,7 @@ struct DiagnosticsView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Text(value.isEmpty ? "—" : value)
-                .font(.footnote.monospaced())
-                .textSelection(.enabled)
+                .font(.footnote)
         }
     }
 }
