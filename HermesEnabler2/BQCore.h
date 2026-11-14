@@ -46,6 +46,14 @@ BOOL BQInPlaceWrite(void);
 void BQSetInPlaceWrite(BOOL on);
 NSString *BQMobileGestaltPath(void);
 
+// ---- layout diagnostic (read-only; never writes MobileGestalt) -------------
+// Returns YES when kern.osversion is present in MGOffsets.plist.
+BOOL BQLayoutIsSupported(void);
+// Reads the live MobileGestalt cache and writes a text report plus a copy of
+// the raw plist under Documents/Diagnostics/. Does not call BQSaveGestalt or
+// otherwise modify the system MobileGestalt cache.
+NSDictionary *BQCollectLayoutDiagnostic(NSString **err);
+
 // ---- PosterBoard -----------------------------------------------------------
 NSString *BQFindPosterBoardContainer(NSString **err);
 BOOL BQApplyTendies(NSURL *url, int *count, NSString **err);

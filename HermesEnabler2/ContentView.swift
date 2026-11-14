@@ -6,53 +6,22 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            if !model.hasBackup {
+            if !model.layoutSupported {
+                unsupportedRoot
+            } else if !model.hasBackup {
                 BackupView(model: model)
             } else {
-                List {
-                    Section("Features") {
-                        NavigationLink { WatchFacesView(model: model) } label: {
-                            Label("Watch Faces", systemImage: "clock")
-                        }
-                        NavigationLink { DisplayAndControlsView(model: model) } label: {
-                            Label("Display & Controls", systemImage: "switch.2")
-                        }
-                        NavigationLink { SensorsAndWorkoutsView(model: model) } label: {
-                            Label("Sensors & Workouts", systemImage: "heart")
-                        }
-                        NavigationLink { IntelligenceView(model: model) } label: {
-                            Label("Siri & Intelligence", systemImage: "sparkles")
-                        }
-                    }
-                    Section("Utilities") {
-                        NavigationLink { BackupView(model: model) } label: {
-                            Label("MG Backups", systemImage: "archivebox")
-                        }
-                    }
-                    Section("Status") {
-                        Text(LocalizedStringKey(model.message))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .navigationTitle("HermesEnabler")
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            model.message = "Starting respring. View the app log if nothing happens."
-                            BQRespring()
-                        } label: {
-                            Image(systemName: "checkmark")
-                        }
-                        .accessibilityLabel("Restart Carousel")
-                    }
-                }
+                supportedRoot
             }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
             if phase == .active {
+                model.layoutSupported = BQLayoutIsSupported()
                 model.refreshBackups()
                 model.refreshCapabilityStates()
+                if !model.layoutSupported {
+                    model.refreshDiagnostic()
+                }
             }
         }
         .confirmationDialog("Restore this backup?", isPresented: $model.showRestoreConfirmation) {
@@ -72,6 +41,74 @@ struct ContentView: View {
             Button("OK", role: .cancel) { }
         } message: { error in
             Text(error.message)
+        }
+    }
+
+    @ViewBuilder
+    private var unsupportedRoot: some View {
+        List {
+            Section {
+                Text("This watchOS build is not in the verified MobileGestalt layout table, so feature changes are disabled. Use Diagnostics to export the cache UUID, length, and raw cache for maintainers. Nothing here writes the system MobileGestalt cache.")
+                    .font(.footnote)
+            }
+            Section("Utilities") {
+                NavigationLink {
+                    DiagnosticsView(model: model)
+                } label: {
+                    Label("Diagnostics", systemImage: "stethoscope")
+                }
+            }
+            Section("Status") {
+                Text(LocalizedStringKey(model.message))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("HermesEnabler")
+    }
+
+    @ViewBuilder
+    private var supportedRoot: some View {
+        List {
+            Section("Features") {
+                NavigationLink { WatchFacesView(model: model) } label: {
+                    Label("Watch Faces", systemImage: "clock")
+                }
+                NavigationLink { DisplayAndControlsView(model: model) } label: {
+                    Label("Display & Controls", systemImage: "switch.2")
+                }
+                NavigationLink { SensorsAndWorkoutsView(model: model) } label: {
+                    Label("Sensors & Workouts", systemImage: "heart")
+                }
+                NavigationLink { IntelligenceView(model: model) } label: {
+                    Label("Siri & Intelligence", systemImage: "sparkles")
+                }
+            }
+            Section("Utilities") {
+                NavigationLink { BackupView(model: model) } label: {
+                    Label("MG Backups", systemImage: "archivebox")
+                }
+                NavigationLink { DiagnosticsView(model: model) } label: {
+                    Label("Diagnostics", systemImage: "stethoscope")
+                }
+            }
+            Section("Status") {
+                Text(LocalizedStringKey(model.message))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("HermesEnabler")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    model.message = "Starting respring. View the app log if nothing happens."
+                    BQRespring()
+                } label: {
+                    Image(systemName: "checkmark")
+                }
+                .accessibilityLabel("Restart Carousel")
+            }
         }
     }
 }

@@ -1216,6 +1216,121 @@ static const BQDeviceBrandLayout *bq_currentLayout(void) {
     return sysctlbyname("kern.osversion", build, &length, NULL, 0) == 0 ? bq_layoutForBuild(build) : NULL;
 }
 
+BOOL BQLayoutIsSupported(void) {
+    return bq_currentLayout() != NULL;
+}
+
+static NSString *bq_sysctl_string(const char *name) {
+    char buf[256] = {0};
+    size_t length = sizeof(buf);
+    if (sysctlbyname(name, buf, &length, NULL, 0) != 0 || length == 0) return nil;
+    if (length > 0 && buf[length - 1] == '\0') length -= 1;
+    if (length == 0) return nil;
+    return [[NSString alloc] initWithBytes:buf length:length encoding:NSUTF8StringEncoding];
+}
+
+NSDictionary *BQCollectLayoutDiagnostic(NSString **err) {
+    if (err) *err = nil;
+    NSString *build = bq_sysctl_string("kern.osversion") ?: @"(unknown)";
+    NSString *productVersion = bq_sysctl_string("kern.osproductversion") ?: @"(unknown)";
+    NSString *machine = bq_sysctl_string("hw.machine") ?: @"(unknown)";
+    BOOL layoutKnown = bq_layoutForBuild(build.UTF8String) != NULL;
+
+    if (!BQCoreInit()) {
+        if (err) *err = NSLocalizedString(@"MobileGestalt access is unavailable on this device.", nil);
+        return nil;
+    }
+
+    NSString *loadError = nil;
+    NSMutableDictionary *plist = BQLoadGestalt(&loadError);
+    if (!plist) {
+        if (err) *err = loadError ?: NSLocalizedString(@"Could not read MobileGestalt.", nil);
+        return nil;
+    }
+
+    id uuidObj = plist[@"CacheUUID"];
+    NSString *cacheUUID = [uuidObj isKindOfClass:[NSString class]] ? uuidObj : @"(missing)";
+    NSData *cacheData = [plist[@"CacheData"] isKindOfClass:[NSData class]] ? plist[@"CacheData"] : nil;
+    NSUInteger cacheLength = cacheData.length;
+    NSUInteger cacheExtraCount = [plist[@"CacheExtra"] isKindOfClass:[NSDictionary class]] ? [plist[@"CacheExtra"] count] : 0;
+
+    NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
+    fmt.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    fmt.timeZone = [NSTimeZone timeZoneWithName:@"UTC"];
+    fmt.dateFormat = @"yyyy-MM-dd'T'HH:mm:ss'Z'";
+    NSString *generated = [fmt stringFromDate:[NSDate date]] ?: @"";
+    NSString *appVersion = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"";
+    NSString *appBuild = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleVersion"] ?: @"";
+
+    NSMutableString *report = [NSMutableString string];
+    [report appendString:@"HermesEnabler layout diagnostic (read-only)\n"];
+    [report appendString:@"This dump never writes the system MobileGestalt cache.\n"];
+    [report appendFormat:@"Generated: %@\n", generated];
+    [report appendFormat:@"App: %@ (%@)\n", appVersion, appBuild];
+    [report appendFormat:@"ProductVersion: %@\n", productVersion];
+    [report appendFormat:@"Build: %@\n", build];
+    [report appendFormat:@"hw.machine: %@\n", machine];
+    [report appendFormat:@"CacheUUID: %@\n", cacheUUID];
+    [report appendFormat:@"CacheDataLength: %lu (0x%lX)\n", (unsigned long)cacheLength, (unsigned long)cacheLength];
+    [report appendFormat:@"CacheExtraKeys: %lu\n", (unsigned long)cacheExtraCount];
+    [report appendFormat:@"LayoutKnown: %@\n", layoutKnown ? @"yes" : @"no"];
+    [report appendString:@"\n"];
+    [report appendString:@"To add this build to MGOffsets.plist a maintainer still needs\n"];
+    [report appendString:@"the DeviceBrand / ScreenClass offsets, PresenceBase, and Boolean\n"];
+    [report appendString:@"Indexes (usually from the physical OTA libMobileGestalt). UUID and\n"];
+    [report appendString:@"length alone identify the cache; offsets are per layout family.\n"];
+    [report appendString:@"Attach this report and MobileGestalt-cache.plist to the GitHub issue.\n"];
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *dir = [BQDocuments() stringByAppendingPathComponent:@"Diagnostics"];
+    NSError *dirError = nil;
+    if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:&dirError]) {
+        if (err) *err = dirError.localizedDescription ?: @"Could not create Diagnostics folder.";
+        return nil;
+    }
+
+    NSString *stamp = [[generated stringByReplacingOccurrencesOfString:@":" withString:@"-"]
+                       stringByReplacingOccurrencesOfString:@"T" withString:@"_"];
+    if (!stamp.length) stamp = [[NSUUID UUID] UUIDString];
+    NSString *reportName = [NSString stringWithFormat:@"layout-%@-%@.txt", build, stamp];
+    NSString *cacheName = [NSString stringWithFormat:@"MobileGestalt-%@-%@.plist", build, stamp];
+    NSString *reportPath = [dir stringByAppendingPathComponent:reportName];
+    NSString *cachePath = [dir stringByAppendingPathComponent:cacheName];
+
+    NSData *reportData = [report dataUsingEncoding:NSUTF8StringEncoding];
+    if (![reportData writeToFile:reportPath atomically:YES]) {
+        if (err) *err = NSLocalizedString(@"Could not write diagnostic report.", nil);
+        return nil;
+    }
+
+    NSError *plistError = nil;
+    NSData *rawPlist = [NSPropertyListSerialization dataWithPropertyList:plist
+                                                                  format:NSPropertyListBinaryFormat_v1_0
+                                                                 options:0
+                                                                   error:&plistError];
+    if (!rawPlist.length || ![rawPlist writeToFile:cachePath atomically:YES]) {
+        if (err) *err = plistError.localizedDescription ?: NSLocalizedString(@"Could not export MobileGestalt cache copy.", nil);
+        return nil;
+    }
+
+    BQLog(@"layout diagnostic: build=%@ uuid=%@ len=%lu known=%d", build, cacheUUID, (unsigned long)cacheLength, layoutKnown);
+
+    return @{
+        @"build": build,
+        @"productVersion": productVersion,
+        @"machine": machine,
+        @"cacheUUID": cacheUUID,
+        @"cacheDataLength": @(cacheLength),
+        @"cacheExtraKeys": @(cacheExtraCount),
+        @"layoutKnown": @(layoutKnown),
+        @"reportText": report,
+        @"reportPath": reportPath,
+        @"cachePath": cachePath,
+        @"generated": generated,
+    };
+}
+
+
 static BOOL bq_buildDefault(const char *build, NSString *key, uint32_t *value) {
     NSDictionary *entry = bq_buildData(@"MGDefaults", [NSString stringWithUTF8String:build]);
     id number = entry[key];

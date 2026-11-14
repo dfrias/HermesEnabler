@@ -7,6 +7,17 @@ final class ContentModel {
     var hasBackup = BQBackupExists()
     var showAccessAlert = false
     var toggleError: ToggleError?
+    var layoutSupported = BQLayoutIsSupported()
+    var diagnosticBuild = ""
+    var diagnosticProductVersion = ""
+    var diagnosticMachine = ""
+    var diagnosticCacheUUID = ""
+    var diagnosticCacheLength: UInt = 0
+    var diagnosticLayoutKnown = false
+    var diagnosticReportText = ""
+    var diagnosticReportURL: URL?
+    var diagnosticCacheURL: URL?
+    var diagnosticError: String?
     
     struct ToggleError: Identifiable {
         let id = UUID()
@@ -94,6 +105,47 @@ final class ContentModel {
         RegionOption(title: "Canada", regionCode: "C", salesSuffix: "C/A")
     ]
     
+
+    var diagnosticCacheLengthText: String {
+        guard diagnosticCacheLength > 0 else { return "—" }
+        return String(format: "%lu (0x%lX)", diagnosticCacheLength, diagnosticCacheLength)
+    }
+
+    func refreshDiagnostic() {
+        diagnosticError = nil
+        var error: NSString?
+        guard let info = BQCollectLayoutDiagnostic(&error) as NSDictionary? else {
+            diagnosticError = (error as String?) ?? "Could not collect layout diagnostic."
+            layoutSupported = BQLayoutIsSupported()
+            return
+        }
+        diagnosticBuild = (info["build"] as? String) ?? ""
+        diagnosticProductVersion = (info["productVersion"] as? String) ?? ""
+        diagnosticMachine = (info["machine"] as? String) ?? ""
+        diagnosticCacheUUID = (info["cacheUUID"] as? String) ?? ""
+        if let number = info["cacheDataLength"] as? NSNumber {
+            diagnosticCacheLength = number.uintValue
+        } else {
+            diagnosticCacheLength = 0
+        }
+        diagnosticLayoutKnown = (info["layoutKnown"] as? NSNumber)?.boolValue ?? false
+        diagnosticReportText = (info["reportText"] as? String) ?? ""
+        if let path = info["reportPath"] as? String {
+            diagnosticReportURL = URL(fileURLWithPath: path)
+        } else {
+            diagnosticReportURL = nil
+        }
+        if let path = info["cachePath"] as? String {
+            diagnosticCacheURL = URL(fileURLWithPath: path)
+        } else {
+            diagnosticCacheURL = nil
+        }
+        layoutSupported = BQLayoutIsSupported()
+        message = diagnosticLayoutKnown
+            ? "Layout is known for this build. Diagnostic export is ready."
+            : "This build is not in the layout table. Export the diagnostic for maintainers."
+    }
+
     func refreshBackups() {
         hasBackup = BQBackupExists()
         backups = BQListGestaltBackups().compactMap { record in
@@ -398,6 +450,7 @@ final class ContentModel {
     }
     
     func refreshCapabilityStates() {
+        layoutSupported = BQLayoutIsSupported()
         var error: NSString?
         var value = ObjCBool(false)
         hermesEnabled = BQGetHermesEnabled(&value, &error) && value.boolValue
